@@ -2,9 +2,9 @@
 
 Solaris 10 SPARC on a Proxmox node.
 
-Proxmox itself has no sparc64 support. That support comes from **[wsh-pve](https://github.com/hwinther/wsh-pve)** (wsh). wsh-pve publishes patched `pve-manager`, `qemu-server`, and `pve-qemu-kvm` at [debian.wshosting.no](https://debian.wshosting.no/). `solaris.sh` installs those packages when they are missing, then finishes the node so a guest can install and keep running.
+Proxmox itself has no sparc64 support. That support comes from **[wsh-pve](https://github.com/hwinther/wsh-pve)** (wsh). wsh-pve publishes patched `pve-manager`, `qemu-server`, and `pve-qemu-kvm` at [debian.wshosting.no](https://debian.wshosting.no/). `patch` installs them when they are missing, then finishes the node. It also adds `sparc` and `sparc64` to the architecture list in `CPUConfig.pm`, which is the check that otherwise rejects `arch: sparc64`.
 
-The guest process is **`qemu-system-sparc64`**. The machine is `sun4u` and KVM is off, so QEMU emulates the SPARC CPU. That machine has one CPU. `2048` MB is the memory this setup runs. OpenBIOS starts at `4096` MB and does not boot at `5120` MB or above, so leave `--memory` at `2048`.
+The guest process is **`qemu-system-sparc64`**. The machine is `sun4u` and KVM is off, so QEMU emulates the SPARC CPU. That machine has one CPU. `--memory` defaults to 2048 MB. 4096 MB boots. 5120 MB and above do not, and `vm` refuses them.
 
 On a patched node the script also provides:
 
@@ -65,7 +65,7 @@ This example lists every `vm` option. The values are the defaults, except `--mac
   --netmask 255.0.0.0 \
   --gateway 10.10.10.1 \
   --bridge vmbr1 \
-  --mac BC:24:11:56:A5:3B \
+  --mac BC:24:11:10:20:01 \
   --idprom 52:54:00:12:34:56 \
   --disk 100 \
   --swap 2048 \
@@ -95,8 +95,8 @@ An empty disk has no boot block, so the VM boots the CD with `- install` and Jum
   --netmask 255.0.0.0 \
   --gateway 10.10.10.1 \
   --bridge vmbr1 \
-  --mac BC:24:11:56:A5:3C \
-  --idprom 52:54:00:12:34:56 \
+  --mac BC:24:11:10:20:02 \
+  --idprom 52:54:00:22:34:57 \
   --disk 100 \
   --swap 2048 \
   --home 10240 \
@@ -119,8 +119,8 @@ Reusing a JumpStart directory follows the same rule. The profile stays, and the 
   --netmask 255.0.0.0 \
   --gateway 10.10.10.1 \
   --bridge vmbr1 \
-  --mac BC:24:11:56:A5:3D \
-  --idprom 52:54:00:12:34:56 \
+  --mac BC:24:11:10:20:03 \
+  --idprom 52:54:00:32:34:58 \
   --disk 100 \
   --swap 2048 \
   --home 10240 \
@@ -144,8 +144,8 @@ Reusing a JumpStart directory follows the same rule. The profile stays, and the 
   --netmask 255.0.0.0 \
   --gateway 10.10.10.1 \
   --bridge vmbr1 \
-  --mac BC:24:11:56:A5:3B \
-  --idprom 52:54:00:12:34:56 \
+  --mac BC:24:11:10:20:04 \
+  --idprom 52:54:00:42:34:59 \
   --disk 100 \
   --swap 2048 \
   --home 10240 \
@@ -173,7 +173,7 @@ An existing `finishssh` is kept. If it does not contain `uata-pio`, delete that 
 | `--disk GB` | `100` | Whole virtual disk in GB |
 | `--swap MB` | `--memory` | Swap slice in MB, written only when `profile` is created |
 | `--home MB` | none | Optional `/export/home` slice in MB |
-| `--memory MB` | `2048` | RAM in MB. The guest still has 1 CPU |
+| `--memory MB` | `2048` | RAM in MB. 4096 boots. Above 4096 is refused. The guest still has 1 CPU |
 | `--storage NAME` | `local-lvm` | Proxmox storage for the disk |
 | `--export-net CIDR` | `10.10.10.0/24` | NFS clients allowed to mount JumpStart |
 | `--start` | off | Boot the VM after `vm` |
@@ -201,6 +201,8 @@ A WiFi uplink cannot carry the guest's MAC. The access point accepts one client 
 ## After the guest is up
 
 JumpStart installs the SSH packages and enables `ssh` on every boot. The console can look ready a few minutes before port 22 answers, because `ssh` waits for the network and the local filesystems. The service starts on its own once those are up.
+
+`qm terminal <vmid>` shows the serial console. Leave it with Ctrl-O. That console prints Solaris output, and keystrokes do not reach the Solaris login on this machine. Use SSH, as shown above.
 
 Use Proxmox **Shutdown**. The hook logs in with the shutdown key and runs `shutdown -y -g0 -i5`, then waits until `qemu-system-sparc64` has exited. **Stop** cuts power while Solaris is still running. The filesystem is left dirty, and the next boot can hang on the disk.
 

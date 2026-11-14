@@ -87,7 +87,7 @@ files. Leave --home out and there is no separate home slice:
     --netmask 255.0.0.0 \
     --gateway 10.10.10.1 \
     --bridge vmbr1 \
-    --mac BC:24:11:56:A5:3B \
+    --mac BC:24:11:10:20:01 \
     --idprom 52:54:00:12:34:56 \
     --disk 100 \
     --swap 2048 \
@@ -110,8 +110,8 @@ guest, so this command prints the duplicate MAC and creates nothing:
     --netmask 255.0.0.0 \
     --gateway 10.10.10.1 \
     --bridge vmbr1 \
-    --mac BC:24:11:56:A5:3C \
-    --idprom 52:54:00:12:34:56 \
+    --mac BC:24:11:10:20:02 \
+    --idprom 52:54:00:22:34:57 \
     --disk 100 \
     --swap 2048 \
     --home 10240 \
@@ -133,8 +133,8 @@ new guest is still refused while another SPARC guest has the wire MAC:
     --netmask 255.0.0.0 \
     --gateway 10.10.10.1 \
     --bridge vmbr1 \
-    --mac BC:24:11:56:A5:3D \
-    --idprom 52:54:00:12:34:56 \
+    --mac BC:24:11:10:20:03 \
+    --idprom 52:54:00:32:34:58 \
     --disk 100 \
     --swap 2048 \
     --home 10240 \
@@ -154,8 +154,8 @@ Add or update a JumpStart client without creating a VM:
     --netmask 255.0.0.0 \
     --gateway 10.10.10.1 \
     --bridge vmbr1 \
-    --mac BC:24:11:56:A5:3B \
-    --idprom 52:54:00:12:34:56 \
+    --mac BC:24:11:10:20:04 \
+    --idprom 52:54:00:42:34:59 \
     --disk 100 \
     --swap 2048 \
     --home 10240 \
@@ -1109,6 +1109,12 @@ serial_proxy_ok() {
 	systemctl is-active --quiet sparc-serial-proxy.service
 }
 
+cpuconfig_ok() {
+	local f=/usr/share/perl5/PVE/QemuServer/CPUConfig.pm
+	[[ -f "$f" ]] || return 1
+	grep -q 'qw(x86_64 aarch64 sparc sparc64)' "$f"
+}
+
 patches_applied() {
 	local qs=/usr/share/perl5/PVE/QemuServer.pm
 	local bios=/usr/share/kvm/openbios-sparc64
@@ -1116,6 +1122,7 @@ patches_applied() {
 	grep -q "if=ide,index=1,media=cdrom" "$qs" || return 1
 	grep -q 'socket .= .\.qemu. if $arch =~ m/\^sparc/' "$qs" || return 1
 	grep -q 'vmgenid} && $arch !~ m/\^sparc/' "$qs" || return 1
+	cpuconfig_ok || return 1
 	[[ -x /usr/bin/qemu-system-sparc64 ]] || return 1
 	[[ "$(cmd646_state /usr/bin/qemu-system-sparc64)" == "patched" ]] || return 1
 	[[ -f /var/lib/solaris-host/openbios.stamp && -f "$bios" ]] || return 1
@@ -1148,6 +1155,11 @@ status_cmd() {
 		echo "  ok    qemu-server IDE routing"
 	else
 		echo "  miss  qemu-server IDE routing"
+	fi
+	if cpuconfig_ok; then
+		echo "  ok    CPUConfig.pm accepts sparc64"
+	else
+		echo "  miss  CPUConfig.pm accepts sparc64"
 	fi
 	if [[ -x /usr/bin/qemu-system-sparc64 ]]; then
 		echo "  $(cmd646_state /usr/bin/qemu-system-sparc64)  CMD646 interrupt and PIO disk in qemu-system-sparc64"
@@ -1248,6 +1260,7 @@ wsh_pending() {
 patches_pending() {
 	[[ "$REFRESH" == 1 ]] && return 0
 	qemuserver_patched || return 0
+	cpuconfig_ok || return 0
 	[[ -x /usr/bin/qemu-system-sparc64 ]] || return 0
 	[[ "$(cmd646_state /usr/bin/qemu-system-sparc64)" == "patched" ]] || return 0
 	[[ -f /var/lib/solaris-host/openbios.stamp ]] || return 0
@@ -1489,17 +1502,15 @@ apply_all() {
 	sysctl -w net.ipv4.conf.all.proxy_arp=1 >/dev/null
 	sysctl -w net.ipv4.conf.default.proxy_arp=1 >/dev/null
 	sysctl -w "net.ipv4.conf.${main}.proxy_arp=1" >/dev/null || true
-	{
-		echo "net.ipv4.ip_forward = 1"
-		echo "net.ipv4.conf.all.proxy_arp = 1"
-		echo "net.ipv4.conf.default.proxy_arp = 1"
-		echo "net.ipv4.conf.${main}.proxy_arp = 1"
-		for br in "${bridges[@]:-}"; do
-			[[ -n "$br" ]] || continue
-			echo "net.ipv4.conf.${br}.proxy_arp = 1"
-			sysctl -w "net.ipv4.conf.${br}.proxy_arp=1" >/dev/null || true
-		done
-	} > /etc/sysctl.d/99-solaris-proxyarp.conf
+	for br in "${bridges[@]:-}"; do
+		[[ -n "$br" ]] || continue
+		sysctl -w "net.ipv4.conf.${br}.proxy_arp=1" >/dev/null || true
+	done
+	cat > /etc/sysctl.d/99-solaris-proxyarp.conf << 'SYS'
+net.ipv4.ip_forward = 1
+net.ipv4.conf.all.proxy_arp = 1
+net.ipv4.conf.default.proxy_arp = 1
+SYS
 	echo "proxy ARP          ${main}${bridges[*]:+ ${bridges[*]}}"
 	for f in "$LAN_DIR"/*; do
 		[[ -f "$f" ]] || continue
@@ -1690,6 +1701,41 @@ patch_cmd() {
 		fail "perl -c /usr/share/perl5/PVE/QemuServer.pm" \
 			"The patched file is not valid Perl. Restore the package copy:" \
 			"  cp -a /usr/share/perl5/PVE/QemuServer.pm.wsh-dist /usr/share/perl5/PVE/QemuServer.pm"
+		fi
+		changed=1
+	fi
+
+	local cpu=/usr/share/perl5/PVE/QemuServer/CPUConfig.pm
+	if [[ "$REFRESH" == 0 ]] && cpuconfig_ok; then
+		echo "already patched    CPUConfig.pm"
+	else
+		echo "patching           CPUConfig.pm"
+		divert_file "$cpu"
+		if ! python3 - "$cpu" << 'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding="utf-8", errors="surrogateescape")
+new = "enum => [qw(x86_64 aarch64 sparc sparc64)],"
+old = "enum => [qw(x86_64 aarch64)],"
+if "qw(x86_64 aarch64 sparc sparc64)" in text:
+    print("CPUConfig.pm already lists sparc64")
+    raise SystemExit(0)
+count = text.count(old)
+if count != 1:
+    sys.exit(f"CPUConfig.pm: expected one stock arch enum, found {count}")
+path.write_text(text.replace(old, new, 1), encoding="utf-8")
+print("CPUConfig.pm arch enum patched")
+PY
+		then
+			fail "CPUConfig.pm patch" \
+				"qemu-server $(pkg_ver qemu-server)" \
+				"The stock line enum => [qw(x86_64 aarch64)], was not found." \
+				"After a newer wsh package, run: ./solaris.sh patch --refresh"
+		fi
+		if ! perl -c "$cpu" >>"$LOG" 2>&1; then
+			fail "perl -c ${cpu}" \
+				"The patched file is not valid Perl. Restore the package copy:" \
+				"  cp -a ${cpu}.wsh-dist ${cpu}"
 		fi
 		changed=1
 	fi
@@ -2342,6 +2388,12 @@ create_vm() {
 	local vol="vm-${VMID}-disk-0"
 	if [[ ! "$VMID" =~ ^[0-9]+$ ]]; then
 		fail "--vmid must be a number" "Got: ${VMID}"
+	fi
+	[[ "$MEMORY" =~ ^[0-9]+$ ]] || fail "--memory is RAM in MB" "Got: ${MEMORY}"
+	if (( MEMORY > 4096 )); then
+		fail "--memory ${MEMORY} is above 4096 MB" \
+			"OpenBIOS on this sun4u machine does not boot at 5120 MB or more." \
+			"Use 2048, or 4096 at most. The guest still has 1 CPU."
 	fi
 	if [[ -e "$conf" ]]; then
 		echo "VM ${VMID} already exists. Its config was not changed."
